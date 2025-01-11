@@ -14,6 +14,7 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS gastos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
     valor REAL NOT NULL,
     descricao TEXT NOT NULL
 )
@@ -24,6 +25,7 @@ conn.commit()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS limites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
     limite REAL NOT NULL
 )
 """)
@@ -43,17 +45,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Função para definir o limite de gastos
 async def definir_limite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        # Tentar pegar o valor do limite passado como argumento
         novo_limite = float(context.args[0])
+        user_id = update.message.from_user.id
 
         # Salvar o limite no banco de dados
-        cursor.execute("DELETE FROM limites")  # Deletar limite antigo, se houver
-        cursor.execute("INSERT INTO limites (limite) VALUES (?)", (novo_limite,))
+        cursor.execute("DELETE FROM limites WHERE user_id = ?", (user_id,))
+        cursor.execute("INSERT INTO limites (user_id, limite) VALUES (?, ?)", (user_id, novo_limite))
         conn.commit()
 
         await update.message.reply_text(f"✅ Seu novo limite de gastos foi definido para R${novo_limite:.2f}.")
     except (IndexError, ValueError):
-        # Se o valor não for fornecido corretamente
         await update.message.reply_text("❌ Formato inválido. Use: /limite [valor]")
 
 # Função para registrar um gasto
@@ -61,9 +62,10 @@ async def registrar_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         valor = float(context.args[0])
         descricao = context.args[1]
+        user_id = update.message.from_user.id
 
         # Salvar o gasto no banco de dados
-        cursor.execute("INSERT INTO gastos (valor, descricao) VALUES (?, ?)", (valor, descricao))
+        cursor.execute("INSERT INTO gastos (user_id, valor, descricao) VALUES (?, ?, ?)", (user_id, valor, descricao))
         conn.commit()
 
         await update.message.reply_text(f"✅ Gasto registrado: R${valor:.2f} ({descricao})")
@@ -72,7 +74,10 @@ async def registrar_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # Função para mostrar o resumo dos gastos
 async def resumo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    cursor.execute("SELECT valor, descricao FROM gastos")
+    user_id = update.message.from_user.id
+
+    # Obter os gastos do usuário atual
+    cursor.execute("SELECT valor, descricao FROM gastos WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
 
     if not rows:
@@ -81,15 +86,13 @@ async def resumo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Calcular o total de gastos
     total = sum(valor for valor, descricao in rows)
-
-    # Exibir os gastos de forma simples
     resumo_gastos = "\n".join([f"- R${valor:.2f}: {descricao}" for valor, descricao in rows])
 
     # Exibir o resumo
     mensagem = f"📊 Resumo dos seus gastos:\n\n{resumo_gastos}\n\n💵 Total: R${total:.2f}"
 
-    # Obter o limite de gastos
-    cursor.execute("SELECT limite FROM limites ORDER BY id DESC LIMIT 1")
+    # Obter o limite de gastos do usuário atual
+    cursor.execute("SELECT limite FROM limites WHERE user_id = ?", (user_id,))
     limite_row = cursor.fetchone()
 
     if limite_row:
@@ -106,16 +109,13 @@ async def resumo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # Configurar o bot
 def main():
-    # Cria a aplicação com o token
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Adiciona os comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("gasto", registrar_gasto))
     app.add_handler(CommandHandler("resumo", resumo))
     app.add_handler(CommandHandler("limite", definir_limite))
 
-    # Inicia o bot
     print("Bot está rodando...")
     app.run_polling()
 
